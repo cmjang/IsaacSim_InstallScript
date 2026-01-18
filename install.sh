@@ -1,17 +1,17 @@
 #!/bin/bash
 # ============================================================
-# NVIDIA Isaac Sim Universal Installer (Unofficial)
+# NVIDIA Isaac Sim Universal Installer (No Emojis)
 #
 # Features:
-# 1. Bypasses strict GLIBC version checks (Legacy System Support).
-# 2. Fixes "metadata-generation-failed" errors during pip install.
-# 3. Full offline installation workflow with automatic cleanup.
+# 1. Bypasses strict GLIBC version checks.
+# 2. Fixes metadata errors.
+# 3. Full offline installation with cleanup.
 # ============================================================
 
-# Disable immediate exit on error to handle retries and cleanup manually
+# Disable immediate exit on error to handle retries manually
 set +e 
 
-# Save current directory to ensure safe cleanup later
+# Save current directory
 CURRENT_DIR=$(pwd)
 
 # --- 1. Version Selection Menu ---
@@ -34,19 +34,19 @@ case $choice in
     *) INPUT_VERSION="5.1.0";;
 esac
 
-# Auto-correct version format: NVIDIA uses 4 digits (e.g., 5.1.0.0)
+# Auto-correct version format
 if [[ "$INPUT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     ISAAC_VERSION="${INPUT_VERSION}.0"
-    echo "Auto-corrected version: $INPUT_VERSION -> $ISAAC_VERSION"
+    echo "[INFO] Auto-corrected version: $INPUT_VERSION -> $ISAAC_VERSION"
 else
     ISAAC_VERSION="$INPUT_VERSION"
 fi
 
-# --- 2. Auto-detect Python Environment ---
+# --- 2. Auto-detect Python ---
 PY_VER=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
 PY_ABI="cp$(python3 -c "import sys; print(f'{sys.version_info.major}{sys.version_info.minor}')")"
 
-# Define temporary download directory
+# Define temp directory
 DOWNLOAD_DIR="./temp_full_cache_${ISAAC_VERSION}_${PY_ABI}"
 
 echo "------------------------------------------------"
@@ -63,15 +63,14 @@ if [ -d "$DOWNLOAD_DIR" ]; then
 fi
 mkdir -p "$DOWNLOAD_DIR"
 
-# --- 4. Full Download (Robust Mode) ---
+# --- 4. Full Download (Best Effort Mode) ---
 echo ""
 echo "[Step 2] Downloading ALL packages..."
-echo "   (This may take a while. Auto-retry enabled for unstable networks.)"
+echo "   (This may take a while.)"
 echo "   Mode: Multi-platform spoofing enabled."
 
-# Download loop: Keep trying until exit code is 0 (Success)
-# This handles network timeouts for large files automatically.
-MAX_RETRIES=10
+# Reduced retries to avoid infinite loops on dependency errors
+MAX_RETRIES=3
 RETRY_COUNT=0
 
 while true; do
@@ -94,16 +93,36 @@ while true; do
     EXIT_CODE=$?
     
     if [ $EXIT_CODE -eq 0 ]; then
-        echo "Download complete."
+        echo "[OK] Download complete."
         break
     else
         RETRY_COUNT=$((RETRY_COUNT+1))
-        echo "Download interrupted (Network error?). Retrying ($RETRY_COUNT)..."
-        sleep 3
+        echo "[WARNING] Download reported errors (Attempt $RETRY_COUNT/$MAX_RETRIES)..."
+        
+        # If max retries reached, we proceed anyway instead of exiting.
+        # This handles cases where optional dependencies (like idna-ssl) fail but the main package is fine.
+        if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
+            echo ""
+            echo "[WARNING] Max retries reached. Assuming core packages are present."
+            echo "   Proceeding to installation step..."
+            break
+        fi
+        
+        sleep 2
     fi
 done
 
-# --- 5. Patch Filenames (The Hack) ---
+# --- Check if we actually downloaded anything ---
+count_whl=$(ls -1 "$DOWNLOAD_DIR"/*.whl 2>/dev/null | wc -l)
+if [ "$count_whl" -eq 0 ]; then
+    echo ""
+    echo "[ERROR] No .whl files were downloaded. The version might not exist or network is down."
+    echo "   Exiting."
+    rm -rf "$DOWNLOAD_DIR"
+    exit 1
+fi
+
+# --- 5. Patch Filenames ---
 echo ""
 echo "[Step 3] Patching filenames for legacy system compatibility..."
 cd "$DOWNLOAD_DIR" || exit 1
@@ -113,7 +132,6 @@ shopt -s nullglob
 
 for file in *.whl; do
     # Logic: Rename any 'manylinux_2_XX' to 'manylinux_2_17'
-    # This ensures maximum compatibility with older GLIBC versions
     if [[ "$file" == *"manylinux_2_"* ]] && [[ "$file" != *"manylinux_2_17"* ]]; then
         
         # Regex replacement using sed
@@ -126,9 +144,9 @@ for file in *.whl; do
     fi
 done
 
-echo "Success: Patched $count files."
+echo "[OK] Patched $count files."
 
-# IMPORTANT: Return to original directory
+# Return to original directory
 cd "$CURRENT_DIR"
 
 # --- 6. Offline Installation ---
@@ -147,12 +165,12 @@ INSTALL_CODE=$?
 echo ""
 if [ $INSTALL_CODE -eq 0 ]; then
     echo "========================================================"
-    echo -e "  SUCCESS: Isaac Sim $ISAAC_VERSION Installed!"
+    echo "   [SUCCESS] Isaac Sim $ISAAC_VERSION Installed!"
     echo "========================================================"
     
     echo "[Step 5] Cleaning up disk space..."
     
-    # Safety check: Ensure we are not inside the directory
+    # Safety check
     if [ "$(pwd)" == "$(realpath $DOWNLOAD_DIR)" ]; then
         cd ..
     fi
@@ -168,7 +186,7 @@ if [ $INSTALL_CODE -eq 0 ]; then
     python3 -c "import isaacsim; print('Isaac Sim import OK')"
 else
     echo "========================================================"
-    echo "   Install Failed (Code: $INSTALL_CODE)"
+    echo "   [FAILED] Install Failed (Code: $INSTALL_CODE)"
     echo "   NOTE: Temporary directory kept for debugging:"
     echo "   $DOWNLOAD_DIR"
     echo "========================================================"
